@@ -26,6 +26,7 @@ var config = {
   extensions: ['js', 'html'],
   outputdir: '.',
   directory: '.',
+  filename: '',
   exclude: [],
   keyword: [],
   onSuccess: null
@@ -37,6 +38,7 @@ TranslateWithGettext = function (options) {
   var po2json = require('po2json'),
       po2csv = require('./lib/po2csv'),
       fs = require('fs'),
+      path = require('path'),
       Q = require('q'),
       exec = require('child_process').exec,
       FilesWalker = require('./lib/filesWalker');
@@ -44,6 +46,7 @@ TranslateWithGettext = function (options) {
 
   options = extend({}, config, options);
 
+  var filename = getFilename();
 
   if (!options.locale) {
     console.log("The option locale is required to start the translation.");
@@ -52,14 +55,13 @@ TranslateWithGettext = function (options) {
 
   if (options.exclude)
     options.exclude.forEach(function (dir, i) {
-      options.exclude[i] = dir.replace('/', '\\'); 
+      options.exclude[i] = path.resolve(dir);
     });
 
-  if (options.outputdir  != '.')
-    options.outputdir = './' + options.outputdir;
+  options.outputdir = path.resolve(options.outputdir);
 
   Q.all([
-      promiseValidateOutputDir(options.outputdir), 
+      promiseValidateOutputDir(options.outputdir),
       promiseCreateFilesWalker(this)
     ])
     .then(buildGettext);
@@ -79,19 +81,24 @@ TranslateWithGettext = function (options) {
     });
     return deferred.promise;
   }
-  
+
+  function getFilename () {
+    if (typeof options.filename === 'function') return options.filename(options.locale);
+    return options.filename ? options.filename + '.' + options.locale : options.locale;
+  }
+
   function buildGettext () {
-    var potFilePath = options.outputdir + '/' + options.locale + '.pot';
+    var potFilePath = options.outputdir + '/' + filename + '.pot';
 
     removePOFile(potFilePath, function () {
 
       buildPOTFiles(that.filesWalker.filesByExtension, potFilePath, function () {
 
-        var poFilePath = options.outputdir + '/' + options.locale + '.po';
+        var poFilePath = options.outputdir + '/' + filename + '.po';
         mergePOFile( poFilePath, potFilePath, function () {
 
           Q(function (resolve, reject, notify) {
-            if (options['no-obsolete']) 
+            if (options['no-obsolete'])
               editPOFile('--no-obsolete', function () {
                 resolve();
               });
@@ -107,7 +114,7 @@ TranslateWithGettext = function (options) {
 
           if (!options['keep-pot'])
             removePOFile(potFilePath);
-          
+
           console.log("The make gettext messages task succeded.");
 
           if (options.onSuccess)
@@ -139,7 +146,7 @@ TranslateWithGettext = function (options) {
       else
         buildPOTFiles(filesByExtension, potFilePath, onSuccess, index+1);
 
-    });  
+    });
   }
 
   function xgettext (potFilePath, directory, keywords, extension, fileNames, join, onSuccess) {
@@ -152,8 +159,8 @@ TranslateWithGettext = function (options) {
 
     //TODO: If html it would be great to create a temporal html file to convert to gettext. This way we could have interesting functionality
     //      like a block to translate like Django.
-    if (directory) 
-      opts += ' -d ' + directory;
+    if (directory)
+      opts += ' -d ' + (directory instanceof Array ? directory.join(' ') : path.resolve(directory));
 
     opts += ' -o ' + potFilePath;
 
@@ -163,25 +170,25 @@ TranslateWithGettext = function (options) {
 
     opts += ' ' + fileNames.join(' ');
 
-    executeCommand('xgettext ' + opts, 
+    executeCommand('xgettext ' + opts,
       function () {
-        onSuccess();  
-      }, 
+        onSuccess();
+      },
       function (error) {
         console.log('xgettext failed. Please confirm you have installed correctly GNU Gettext');
       }
-    );        
+    );
   }
 
   function mergePOFile (poFilePath, potFilePath, onSuccess) {
-    fs.open(poFilePath, 'r', function (error) {      
+    fs.open(poFilePath, 'r', function (error) {
       if (error !== null) {
         //The PO File does not exist so it is not necessary to merge
-        exec('cp ' + potFilePath + ' ' + poFilePath);  
+        exec('cp ' + potFilePath + ' ' + poFilePath);
       }
-      else {      
+      else {
         //Merge the existing PO with the new POT
-        var opts = ' -q -U --no-fuzzy-matching --previous ' + poFilePath + ' ' + potFilePath; 
+        var opts = ' -q -U --no-fuzzy-matching --previous ' + poFilePath + ' ' + potFilePath;
         executeCommand('msgmerge ' + opts, onSuccess, function (error) {
           console.log('msgmerge failed. Please confirm you have installed correctly GNU Gettext');
         });
@@ -193,10 +200,10 @@ TranslateWithGettext = function (options) {
     debugger;
     var opts = opts || '';
     outputPath = outputPath || poFilePath;
-    inputPath = inputPath || poFilePath;    
-    opts += ' -o ' + outputPath; 
+    inputPath = inputPath || poFilePath;
+    opts += ' -o ' + outputPath;
 
-    executeCommand ('msgattrib ' + opts + ' ' + inputPath, onSuccess, onSuccess); 
+    executeCommand ('msgattrib ' + opts + ' ' + inputPath, onSuccess, onSuccess);
   }
 
   function removePOFile (potFilePath, onSuccess) {
@@ -216,7 +223,7 @@ TranslateWithGettext = function (options) {
         if (err !== null)
           console.log("Error while generating JSON file: " + err);
         else {
-          var jsonOutput = options.outputdir + '/' + options.locale + '.json';
+          var jsonOutput = options.outputdir + '/' + filename + '.json';
           fs.writeFile(jsonOutput, dataStr, function (err, written, string) {
               if (err !== null)
                 console.log("Error while saving the JSON file: " + err);
@@ -229,11 +236,11 @@ TranslateWithGettext = function (options) {
   function buildToTranslateFiles (poFilePath) {
     debugger;
     if (options.toTranslatePo || options.toTranslateCsv) {
-      var toTranslatePoFile = options.outputdir + '/' + options.locale + 'TRANS.po';
+      var toTranslatePoFile = options.outputdir + '/' + filename + 'TRANS.po';
       editPOFile('--untranslated', function () {
         debugger;
         if (options.toTranslateCsv) {
-          var toTranslateCSVFile = options.outputdir + '/' + options.locale + 'TRANS.csv';
+          var toTranslateCSVFile = options.outputdir + '/' + filename + 'TRANS.csv';
           po2csv.createCSVFileFromPo(toTranslatePoFile, toTranslateCSVFile, function () {
             if (!options.toTranslatePo)
               removePOFile(toTranslatePoFile);
@@ -255,7 +262,7 @@ TranslateWithGettext = function (options) {
         if (onSuccess)
           onSuccess();
       }
-    }); 
+    });
   }
 
   function extend () {
@@ -270,17 +277,18 @@ TranslateWithGettext = function (options) {
   }
 
   function validateOutputDir (outputdir, onSuccess, index) {
+
     var index = index || 0;
-    var paths = outputdir.split('/');
-    
-    fs.readdir(paths.slice(0,index+1).join('\\'), function(error, files) {
+    var paths = outputdir.split(path.sep);
+
+    fs.readdir(paths.slice(0,index+1).join(path.sep) || path.sep, function(error, files) {
       if(error !== null) {
         //Do not exist the dir that it tried to open
-        fs.mkdirSync(paths.slice(0,index+1).join('\\'));
+        fs.mkdirSync(paths.slice(0,index+1).join(path.sep));
       }
       if(index < paths.length - 1)
         validateOutputDir(outputdir, onSuccess, index+1)
-      else 
+      else
         onSuccess();
     });
   }
